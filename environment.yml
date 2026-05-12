@@ -1,0 +1,471 @@
+# name: MLOPS End-to-End Pipeline
+
+# on: 
+#   push:
+#     branches: [dev]
+#   pull_request:
+#     branches: [main]
+
+# jobs:
+#   validate:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Checkout Code
+#         uses: actions/checkout@v4
+
+#       - name: Set up Python
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: '3.10'
+
+#       - name: Install Dependencies
+#         run: pip install -r requirements.txt
+      
+#       - name: Run Tests and Training
+#         run: |
+#           pytest tests/
+#           python train.py --epochs 1
+
+#   deploy:
+#     needs: validate
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Checkout Code
+#         uses: actions/checkout@v4
+
+#       - name: Fetch Best Model
+#         run: python get_best_model.py
+
+#       - name: Build Docker Image
+#         run: | 
+#           docker-build \
+#             --build-arg MODEL_PATH=$(cat best_model_uri.txt) \
+#             -t app:latest .
+
+#       - name: Push Docker Image
+#         run: docker push app:latest
+
+
+
+
+
+
+name: Harry Potter
+on: 
+  push:
+    branches: [dev]
+  pull_request: 
+    branches: [main]
+    branches-ignore: [dev]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python: '3.10'
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt dvc mlflow
+
+      - name: Pull Data with DVC
+        run: dvc pull
+
+      - name: Run Unit & Integration tests
+        run: pytest tests/
+
+      - name: Smoke Train & Log to MLflow
+        env:
+          MLFLOW_TRACKING_URI: ${{secrets.MLFLOW_TRACKING_URI}}
+        run: python train.py --epochs 1      
+
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python: '3.10'
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt mlflow
+
+      - name: Fetch Best Model from MLflow
+        env:
+         MLFLOW_TRACKING_URI: ${{secrets.MLFLOW_TRACKING_URI}}
+        run: python get_best_model.py
+
+      - name: Docker Login
+        uses: docker/login-action@v3
+        with:
+          username: ${{secrets.DOCKER_USERNAME}}
+          password: ${{secrets.DOCKER_PASSWORD}}
+
+      - name: Build and Push Docker Image
+        run: |
+          MODEL_URI=$(cat best_model_uri.txt)
+          docker build --build-arg  MODEL_PATH=$MODEL_URI \
+          -t ${{secrets.DOCKER_USERNAME}}/ml-app:latest . 
+          docker push ${{secrets.DOCKER_USERNAME}}/ml-app:latest
+
+
+
+
+
+name: Full MLOps Pipeline
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+
+  # ============================================
+  # JOB 1: VALIDATE (CI)
+  # ============================================
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Setup Python
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # 3. Install dependencies
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install dvc mlflow pytest
+
+      # 4. Pull data from DVC
+      - name: Pull data
+        env:
+          GDRIVE_CREDENTIALS_DATA: ${{ secrets.GDRIVE_CREDENTIALS_DATA }}
+        run: |
+          dvc pull
+
+      # 5. Run tests
+      - name: Run tests
+        run: |
+          pytest tests/
+
+      # 6. Train model + log to MLflow
+      - name: Train model
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+        run: |
+          python train.py
+
+      # 7. Upload model info (Run ID)
+      - name: Upload model_info.txt
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-info
+          path: model_info.txt
+          if-no-files-found: error
+
+  # ============================================
+  # JOB 2: DEPLOY (CD)
+  # ============================================
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Setup Python
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # 3. Install MLflow client
+      - name: Install MLflow
+        run: |
+          python -m pip install --upgrade pip
+          pip install mlflow
+
+      # 4. Download artifact
+      - name: Download model_info.txt
+        uses: actions/download-artifact@v4
+        with:
+          name: model-info
+
+      # 5. Show file (debug)
+      - name: Show model info
+        run: |
+          echo "Run ID:"
+          cat model_info.txt
+
+      # 6. Check performance threshold
+      - name: Check accuracy
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+        run: |
+          python check_threshold.py
+
+      # 7. Login to Docker
+      - name: Docker login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # 8. Build & push image
+      - name: Build & Push Docker image
+        run: |
+          RUN_ID=$(cat model_info.txt)
+
+          docker build \
+            --build-arg RUN_ID=$RUN_ID \
+            -t ${{ secrets.DOCKER_USERNAME }}/ml-app:latest .
+
+          docker push ${{ secrets.DOCKER_USERNAME }}/ml-app:latest
+
+
+
+
+
+
+
+
+name: MLOPS Full Pipeline
+
+on: 
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install mlflow dvc pytest
+
+      - name: Pull data
+        env: 
+          GDRIVE_CREDENTIALS_DATA: ${{secrets.GDRIVE_CREDENTIALS_DATA}}
+        run: |
+          dvc pull  
+
+      - name: Run tests
+        run: |
+          pytest tests/
+
+      - name: Train
+        env: 
+          MLFLOW_TRACKING_URI: ${{secrets.MLFLOW_TRACKING_URI}}
+          MLFLOW_TRACKING_USERNAME: ${{secrets.MLFLOW_TRACKING_USERNAME}}
+          MLFLOW_TRACKING_PASSWORD: ${{secrets.MLFLOW_TRACKING_PASSWORD}}
+        run: |
+          python train.py
+
+      - name: Upload Model-info
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-info
+          path: model_info.txt
+          if-no-files-found: error
+
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+
+    steps: 
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install mlflow  
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with: 
+          name: model-info
+
+      - name: Debug artifact
+        run: |
+          echo "RUN_ID:"
+          cat model_info.txt
+
+      - name: Check Performance threshold
+        env: 
+          MLFLOW_TRACKING_URI: ${{secrets.MLFLOW_TRACKING_URI}}
+          MLFLOW_TRACKING_USERNAME: ${{secrets.MLFLOW_TRACKING_USERNAME}}
+          MLFLOW_TRACKING_PASSWORD: ${{secrets.MLFLOW_TRACKING_PASSWORD}}
+        run: |
+          python check_threshold.py
+
+      - name: Login to docker
+        uses: docker/login-action@v3
+        with:
+          username: ${{secrets.DOCKER_USERNAME}}
+          password: ${{secrets.DOCKER_PASSWORD}}
+
+      - name: Build and push docker image   
+        run: | 
+          RUN_ID= $(cat model_info.txt)
+          docker build\
+          --build-arg RUN_ID= $RUN_ID\
+          -t build ${{secrets.DOCKER_USERNAME}}/ml-app:latest .
+
+          docker push ${{secrets.DOCKER_USERNAME}}/ml-app:latest
+
+
+
+
+
+
+
+
+
+
+
+
+name: Harry Potter
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [dev]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Python Code
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/python-setup@v5
+        with:
+          python: "3.11"
+
+      - name: Install requirements
+        run: pip install -r requirements.txt
+
+      - name: Pull Data
+        env:
+          GDRIVE_DATA: ${{secrets.GDRIVE_DATA}}
+        run: | 
+          dvc pull
+
+      - name: Upload Model Info
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-info
+          path: model.txt
+          if-no-files-found: error    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: Harry Potter
+  labels:
+    owner: Voldemort
+    app: Hogwarts
+    tier: Frontend
+    version: "1.1"
+
+spec:
+  replicas: 3
+  selector:
+    matchlabels:
+      app: streamlit-app
+
+  template:
+    labels:
+      app: streamlit-app
+
+    spec:
+      containers:
+        - name: hogwartsContainer
+          image:xxx
+          port:
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
