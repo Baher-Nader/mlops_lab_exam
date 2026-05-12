@@ -2,7 +2,7 @@ name: CI Workflow
 
 on:
   push:
-    branches-ignore: [main] # branches-ignore means you should push on all the branches except the main branch which is required from the document.
+    branches: [main] # branches-ignore means you should push on all the branches except the main branch which is required from the document.
 
 jobs:
     test:
