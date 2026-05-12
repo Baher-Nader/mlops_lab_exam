@@ -1,0 +1,41 @@
+name: CI Workflow
+
+on:
+  push:
+    branches-ignore: [main] # branches-ignore means you should push on all the branches except the main branch which is required from the document.
+
+jobs:
+    test:
+      runs-on: ubuntu-latest # the virtual machine that I am running on. 
+      steps:
+        - name: Checkout Code
+          uses: actions/checkout@v4  # It means that I should transfer the code from your machine to the ubuntu-latest machine, so it can work on it. It is defined with uses variable because this is a built in function that github actions provides
+
+        - name: Python Setup
+          uses: actions/setup-python@v5 # Since I am working and compiling on python, I have to install it first duhh
+          with:
+            python: '3.11' # The python version that I am working on.
+            
+        - name: Install dependencies
+          run: pip install -r requirements.txt # I should install requirements.txt as it has packages that I need to run the code.
+
+        - name: Test Python
+          run: python -c "import torch; print('Harry Potter, The Boy Who Lived Come to die. AVADAAAA KADAVRAAAA')" # this is just a test for the python environment to see if it's working or not.
+
+        - name: Test Python Environment 
+          run: pytest tests/ # This is just a unit testing step that I wanted to add.
+
+        - name: Upload Readme File
+          uses: actions/upload-artifact@v4 # This a built in function that uploads any document so the other job on another machine can download it and work on it. 
+          with:
+            name: readme # This is the name where the other machine can write to access and download this readme file.
+            path: README.md # This is the current path of the readme file.
+            if no files found: error   # This is something that I wanted to add which means if there's no file uploaded in this path raise and error.    
+
+
+
+
+# Since jobs by default run in parallel, and sometimes a job my depend on a previous job for files or whatever,
+# so the previous job must run and end before the current job and here enter the needs variable which means wait for this job to end and then run the current job
+
+# Jobs run in parallel by default when there is no needs variable. 
